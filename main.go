@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"io"
 	"load-balancer/config"
 	"load-balancer/models"
 	"load-balancer/services"
@@ -9,16 +10,32 @@ import (
 	"log"
 	"net"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
+
+	// pprof for performance profiling
+	"net/http"
+	_ "net/http/pprof"
 )
 
 const (
 	msgNoBackend  = "no backend available"
 	msgBackendErr = "backend error"
+	defaultPoolSz = 8
+)
+
+var (
+	readerPool = sync.Pool{New: func() any { return bufio.NewReader(strings.NewReader("")) }}
+	writerPool = sync.Pool{New: func() any { return bufio.NewWriter(io.Discard) }}
 )
 
 func main() {
+	// pprof server for performance profiling
+	go func() {
+		log.Println(http.ListenAndServe("localhost:6060", nil))
+	}()
+
 	cfg, cfgPath, err := config.ReadConfig()
 	if err != nil {
 		log.Fatalf("read config error: %v", err)
@@ -39,7 +56,12 @@ func main() {
 		log.Fatalf("missing backends in config: %s", cfgPath)
 	}
 
-	pool := &models.BackendPool{}
+	poolSize := cfg.BackendPoolSize
+	if poolSize <= 0 {
+		poolSize = defaultPoolSz
+	}
+
+	pool := models.NewBackendPool(poolSize, timeout)
 	pool.ReplaceBackends(backends, nil)
 
 	ln, err := net.Listen("tcp", listenAddr)
@@ -64,11 +86,11 @@ func main() {
 			continue
 		}
 
-		go handleClient(clientConn, pool, timeout)
+		go handleClient(clientConn, pool)
 	}
 }
 
-func handleClient(c net.Conn, pool *models.BackendPool, timeout time.Duration) {
+func handleClient(c net.Conn, pool *models.BackendPool) {
 	id, wm := pool.RegisterWorker()
 	defer c.Close()
 	defer pool.UnregisterWorker(id, wm)
@@ -79,8 +101,8 @@ func handleClient(c net.Conn, pool *models.BackendPool, timeout time.Duration) {
 		line := scanner.Text()
 		atomic.AddUint64(&wm.Requests, 1)
 		atomic.AddUint64(&wm.BytesIn, uint64(len(line)))
-		backendAddr := pool.Pick()
-		if backendAddr == "" {
+		backend := pool.Pick()
+		if backend == nil {
 			if !writeClientLine(writer, wm, msgNoBackend) {
 				return
 			}
@@ -88,11 +110,11 @@ func handleClient(c net.Conn, pool *models.BackendPool, timeout time.Duration) {
 			continue
 		}
 
-		bm := pool.BeginBackendRequest(backendAddr)
-		resp, err := forwardLine(backendAddr, timeout, line)
-		pool.EndBackendRequest(backendAddr, bm)
+		bm := pool.BeginBackendRequest(backend.Addr)
+		resp, err := forwardLine(pool, backend, line)
+		pool.EndBackendRequest(backend.Addr, bm)
 		if err != nil {
-			log.Printf("dial %s error: %v", backendAddr, err)
+			log.Printf("backend %s error: %v", backend.Addr, err)
 			if !writeClientLine(writer, wm, msgBackendErr) {
 				return
 			}
@@ -110,23 +132,32 @@ func handleClient(c net.Conn, pool *models.BackendPool, timeout time.Duration) {
 	}
 }
 
-func forwardLine(backendAddr string, timeout time.Duration, line string) (string, error) {
-	conn, err := net.DialTimeout("tcp", backendAddr, timeout)
+func forwardLine(pool *models.BackendPool, backend *models.Backend, line string) (string, error) {
+	conn, err := pool.Acquire(backend)
 	if err != nil {
 		return "", err
 	}
-	defer conn.Close()
 
-	reader := bufio.NewReader(conn)
-	writer := bufio.NewWriter(conn)
-	_, _ = reader.ReadString('\n')
+	reader := readerPool.Get().(*bufio.Reader)
+	writer := writerPool.Get().(*bufio.Writer)
+	reader.Reset(conn)
+	writer.Reset(conn)
+	usable := true
+
+	defer func() {
+		readerPool.Put(reader)
+		writerPool.Put(writer)
+		pool.Release(backend, conn, usable)
+	}()
 
 	if err := writeLine(writer, line); err != nil {
+		usable = false
 		return "", err
 	}
 
 	resp, err := reader.ReadString('\n')
 	if err != nil {
+		usable = false
 		return "", err
 	}
 

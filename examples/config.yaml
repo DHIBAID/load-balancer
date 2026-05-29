@@ -1,6 +1,7 @@
 # Example load balancer config
 listen: ":9000"
 dial_timeout: "3s"
+backend_pool_size: 8
 backends:
   - "127.0.0.1:9001"
   - "127.0.0.1:9002"

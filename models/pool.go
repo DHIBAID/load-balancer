@@ -1,16 +1,25 @@
 package models
 
 import (
+	"bufio"
+	"errors"
+	"log"
+	"net"
 	"sync"
 	"sync/atomic"
+	"time"
 )
 
 type BackendPool struct {
 	Next         uint64
 	nextWorkerID uint64
-	backends     atomic.Value
+	backendSnap  atomic.Value
 	workers      sync.Map
 	backendStats sync.Map
+	backends     sync.Map
+	poolSize     int
+	dialTimeout  time.Duration
+	borrowTimeout time.Duration
 	totalMetrics PoolMetrics
 }
 
@@ -40,10 +49,23 @@ type backendSnapshot struct {
 	Failed []string
 }
 
-func (p *BackendPool) Pick() string {
+var ErrNoBackendConn = errors.New("no backend connection available")
+
+func NewBackendPool(poolSize int, dialTimeout time.Duration) *BackendPool {
+	if poolSize <= 0 {
+		poolSize = 1
+	}
+	return &BackendPool{
+		poolSize:    poolSize,
+		dialTimeout: dialTimeout,
+		borrowTimeout: dialTimeout,
+	}
+}
+
+func (p *BackendPool) Pick() *Backend {
 	snapshot, ok := p.snapshot()
 	if !ok || len(snapshot.Active) == 0 {
-		return ""
+		return nil
 	}
 
 	active := snapshot.Active
@@ -61,7 +83,7 @@ func (p *BackendPool) Pick() string {
 		}
 	}
 
-	return selected
+	return p.ensureBackend(selected)
 }
 
 func (p *BackendPool) backendActive(addr string) uint64 {
@@ -88,15 +110,118 @@ func (p *BackendPool) SnapshotBackends() (active []string, failed []string) {
 }
 
 func (p *BackendPool) snapshot() (backendSnapshot, bool) {
-	snapshot, ok := p.backends.Load().(backendSnapshot)
+	snapshot, ok := p.backendSnap.Load().(backendSnapshot)
 	return snapshot, ok
 }
 
 func (p *BackendPool) ReplaceBackends(active []string, failed []string) {
-	p.backends.Store(backendSnapshot{
+	for _, addr := range active {
+		p.ensureBackend(addr)
+	}
+	p.backendSnap.Store(backendSnapshot{
 		Active: append([]string(nil), active...),
 		Failed: append([]string(nil), failed...),
 	})
+}
+
+func (p *BackendPool) ensureBackend(addr string) *Backend {
+	if value, ok := p.backends.Load(addr); ok {
+		backend, ok := value.(*Backend)
+		if ok && backend != nil {
+			return backend
+		}
+	}
+
+	backend := &Backend{
+		Addr: addr,
+		Pool: make(chan net.Conn, p.poolSize),
+	}
+	value, loaded := p.backends.LoadOrStore(addr, backend)
+	if loaded {
+		existing, ok := value.(*Backend)
+		if ok && existing != nil {
+			return existing
+		}
+	}
+
+	for i := 0; i < p.poolSize; i++ {
+		conn, err := p.dialBackend(addr)
+		if err != nil {
+			log.Printf("backend %s warm connection error: %v", addr, err)
+			continue
+		}
+		backend.Pool <- conn
+	}
+
+	return backend
+}
+
+func (p *BackendPool) dialBackend(addr string) (net.Conn, error) {
+	conn, err := net.DialTimeout("tcp", addr, p.dialTimeout)
+	if err != nil {
+		return nil, err
+	}
+
+	if p.dialTimeout > 0 {
+		_ = conn.SetReadDeadline(time.Now().Add(p.dialTimeout))
+	}
+	reader := bufio.NewReader(conn)
+	if _, err := reader.ReadString('\n'); err != nil {
+		_ = conn.Close()
+		return nil, err
+	}
+	if p.dialTimeout > 0 {
+		_ = conn.SetReadDeadline(time.Time{})
+	}
+
+	return conn, nil
+}
+
+func (p *BackendPool) Acquire(backend *Backend) (net.Conn, error) {
+	if backend == nil {
+		return nil, ErrNoBackendConn
+	}
+	if p.borrowTimeout <= 0 {
+		conn, ok := <-backend.Pool
+		if !ok || conn == nil {
+			return nil, ErrNoBackendConn
+		}
+		return conn, nil
+	}
+
+	timer := time.NewTimer(p.borrowTimeout)
+	defer timer.Stop()
+	select {
+	case conn, ok := <-backend.Pool:
+		if !ok || conn == nil {
+			return nil, ErrNoBackendConn
+		}
+		return conn, nil
+	case <-timer.C:
+		return nil, ErrNoBackendConn
+	}
+}
+
+func (p *BackendPool) Release(backend *Backend, conn net.Conn, reusable bool) {
+	if conn == nil {
+		return
+	}
+	if backend == nil {
+		_ = conn.Close()
+		return
+	}
+	if reusable {
+		backend.Pool <- conn
+		return
+	}
+
+	_ = conn.Close()
+	replacement, err := p.dialBackend(backend.Addr)
+	if err != nil {
+		log.Printf("backend %s replacement dial error: %v", backend.Addr, err)
+		return
+	}
+	backend.Pool <- replacement
 }
 
 func (p *BackendPool) RegisterWorker() (uint64, *WorkerMetrics) {
