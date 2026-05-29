@@ -9,6 +9,7 @@ import (
 	"log"
 	"net"
 	"strings"
+	"sync/atomic"
 	"time"
 )
 
@@ -18,22 +19,23 @@ func main() {
 		log.Fatalf("read config error: %v", err)
 	}
 
-	listenAddr := utils.GetString(cfg, "listen")
+	listenAddr := cfg.Listen
 	if listenAddr == "" {
 		log.Fatalf("missing listen address in config: %s", cfgPath)
 	}
 
-	timeout := utils.ParseDuration(utils.GetString(cfg, "dial_timeout"))
+	timeout := utils.ParseDuration(cfg.DialTimeout)
 	if timeout == 0 {
 		timeout = 3 * time.Second
 	}
 
-	backends := utils.NormalizeBackends(utils.GetStringSlice(cfg, "backends"))
+	backends := utils.NormalizeBackends(cfg.Backends)
 	if len(backends) == 0 {
 		log.Fatalf("missing backends in config: %s", cfgPath)
 	}
 
-	pool := &models.BackendPool{Addresses: backends}
+	pool := &models.BackendPool{}
+	pool.InitBackends(backends)
 
 	ln, err := net.Listen("tcp", listenAddr)
 	if err != nil {
@@ -44,9 +46,14 @@ func main() {
 	// Start a goroutine to periodically check the health of backends
 	go func() {
 		for {
-			services.CheckHealth(*pool)
+			services.CheckHealth(pool)
 			time.Sleep(10 * time.Second) // Check every 10 seconds
 		}
+	}()
+
+	// Spawn HTTP server for metrics
+	go func() {
+		services.StartMetricsServer(&cfg, pool)
 	}()
 
 	for {
@@ -62,14 +69,19 @@ func main() {
 }
 
 func handleClient(c net.Conn, pool *models.BackendPool, timeout time.Duration) {
+	id, wm := pool.RegisterWorker()
 	defer c.Close()
+	defer pool.UnregisterWorker(id, wm)
 
 	scanner := bufio.NewScanner(c)
 	for scanner.Scan() {
 		line := scanner.Text()
+		atomic.AddUint64(&wm.Requests, 1)
+		atomic.AddUint64(&wm.BytesIn, uint64(len(line)))
 		backendAddr := pool.Pick()
 		if backendAddr == "" {
 			_, _ = c.Write([]byte("no backend available\n"))
+			atomic.AddUint64(&wm.Errors, 1)
 			continue
 		}
 
@@ -77,10 +89,16 @@ func handleClient(c net.Conn, pool *models.BackendPool, timeout time.Duration) {
 		if err != nil {
 			log.Printf("dial %s error: %v", backendAddr, err)
 			_, _ = c.Write([]byte("backend error\n"))
+			atomic.AddUint64(&wm.Errors, 1)
 			continue
 		}
 
 		_, _ = c.Write([]byte(resp + "\n"))
+		atomic.AddUint64(&wm.BytesOut, uint64(len(resp)+1))
+	}
+
+	if err := scanner.Err(); err != nil {
+		atomic.AddUint64(&wm.Errors, 1)
 	}
 }
 
