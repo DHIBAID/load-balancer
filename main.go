@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"load-balancer/config"
 	"load-balancer/models"
+	"load-balancer/services"
 	"load-balancer/utils"
 	"log"
 	"net"
@@ -40,6 +41,14 @@ func main() {
 	}
 	log.Printf("tcp lb listening on %s", listenAddr)
 
+	// Start a goroutine to periodically check the health of backends
+	go func() {
+		for {
+			services.CheckHealth(*pool)
+			time.Sleep(10 * time.Second) // Check every 10 seconds
+		}
+	}()
+
 	for {
 		clientConn, err := ln.Accept()
 		if err != nil {
@@ -49,6 +58,7 @@ func main() {
 
 		go handleClient(clientConn, pool, timeout)
 	}
+
 }
 
 func handleClient(c net.Conn, pool *models.BackendPool, timeout time.Duration) {

@@ -4,7 +4,7 @@ import "sync/atomic"
 
 type BackendPool struct {
 	Addresses []string
-	Next  uint64
+	Next      uint64
 }
 
 func (p *BackendPool) Pick() string {
