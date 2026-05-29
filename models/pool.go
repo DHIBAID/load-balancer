@@ -10,6 +10,7 @@ type BackendPool struct {
 	nextWorkerID uint64
 	backends     atomic.Value
 	workers      sync.Map
+	backendStats sync.Map
 	totalMetrics PoolMetrics
 }
 
@@ -23,6 +24,10 @@ type WorkerMetrics struct {
 	Errors   uint64
 	BytesIn  uint64
 	BytesOut uint64
+}
+
+type BackendMetrics struct {
+	Active uint64
 }
 
 type PoolMetrics struct {
@@ -40,8 +45,31 @@ func (p *BackendPool) Pick() string {
 	if len(active) == 0 {
 		return ""
 	}
-	idx := atomic.AddUint64(&p.Next, 1) - 1
-	return active[idx%uint64(len(active))]
+
+	start := int(atomic.AddUint64(&p.Next, 1)-1) % len(active)
+	selected := active[start]
+	minActive := p.backendActive(selected)
+
+	for i := 1; i < len(active); i++ {
+		idx := (start + i) % len(active)
+		candidate := active[idx]
+		count := p.backendActive(candidate)
+		if count < minActive {
+			minActive = count
+			selected = candidate
+		}
+	}
+
+	return selected
+}
+
+func (p *BackendPool) backendActive(addr string) uint64 {
+	if value, ok := p.backendStats.Load(addr); ok {
+		if bm, ok := value.(*BackendMetrics); ok && bm != nil {
+			return atomic.LoadUint64(&bm.Active)
+		}
+	}
+	return 0
 }
 
 func (p *BackendPool) SnapshotBackends() (active []string, failed []string) {
@@ -76,6 +104,35 @@ func (p *BackendPool) RegisterWorker() (uint64, *WorkerMetrics) {
 	wm := &WorkerMetrics{}
 	p.workers.Store(id, wm)
 	return id, wm
+}
+
+func (p *BackendPool) BeginBackendRequest(addr string) *BackendMetrics {
+	if value, ok := p.backendStats.Load(addr); ok {
+		if bm, ok := value.(*BackendMetrics); ok && bm != nil {
+			atomic.AddUint64(&bm.Active, 1)
+			return bm
+		}
+	}
+
+	bm := &BackendMetrics{}
+	atomic.AddUint64(&bm.Active, 1)
+	actual, _ := p.backendStats.LoadOrStore(addr, bm)
+	if existing, ok := actual.(*BackendMetrics); ok && existing != nil {
+		if existing != bm {
+			atomic.AddUint64(&bm.Active, ^uint64(0))
+			atomic.AddUint64(&existing.Active, 1)
+			return existing
+		}
+	}
+	return bm
+}
+
+func (p *BackendPool) EndBackendRequest(addr string, bm *BackendMetrics) {
+	_ = addr
+	if bm == nil {
+		return
+	}
+	atomic.AddUint64(&bm.Active, ^uint64(0))
 }
 
 func (p *BackendPool) UnregisterWorker(id uint64, wm *WorkerMetrics) {

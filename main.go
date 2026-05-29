@@ -85,7 +85,9 @@ func handleClient(c net.Conn, pool *models.BackendPool, timeout time.Duration) {
 			continue
 		}
 
+		bm := pool.BeginBackendRequest(backendAddr)
 		resp, err := forwardLine(backendAddr, timeout, line)
+		pool.EndBackendRequest(backendAddr, bm)
 		if err != nil {
 			log.Printf("dial %s error: %v", backendAddr, err)
 			_, _ = c.Write([]byte("backend error\n"))
