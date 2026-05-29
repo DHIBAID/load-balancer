@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"io"
 	"load-balancer/config"
 	"load-balancer/models"
@@ -26,8 +27,9 @@ const (
 )
 
 var (
-	readerPool = sync.Pool{New: func() any { return bufio.NewReader(strings.NewReader("")) }}
-	writerPool = sync.Pool{New: func() any { return bufio.NewWriter(io.Discard) }}
+	readerPool     = sync.Pool{New: func() any { return bufio.NewReader(strings.NewReader("")) }}
+	writerPool     = sync.Pool{New: func() any { return bufio.NewWriter(io.Discard) }}
+	lineBufferPool = sync.Pool{New: func() any { return new(bytes.Buffer) }}
 )
 
 func main() {
@@ -95,47 +97,95 @@ func handleClient(c net.Conn, pool *models.BackendPool) {
 	defer c.Close()
 	defer pool.UnregisterWorker(id, wm)
 
-	scanner := bufio.NewScanner(c)
-	writer := bufio.NewWriter(c)
-	for scanner.Scan() {
-		line := scanner.Text()
+	clientReader := bufio.NewReaderSize(c, 64*1024)
+	clientWriter := bufio.NewWriter(c)
+	for {
+		line, err := clientReader.ReadSlice('\n')
+		if err != nil {
+			if err == bufio.ErrBufferFull {
+				buf := lineBufferPool.Get().(*bytes.Buffer)
+				buf.Reset()
+				buf.Write(line)
+				for err == bufio.ErrBufferFull {
+					line, err = clientReader.ReadSlice('\n')
+					buf.Write(line)
+				}
+				if err != nil && err != io.EOF {
+					lineBufferPool.Put(buf)
+					atomic.AddUint64(&wm.Errors, 1)
+					return
+				}
+				if buf.Len() == 0 && err == io.EOF {
+					lineBufferPool.Put(buf)
+					return
+				}
+				line = make([]byte, buf.Len())
+				copy(line, buf.Bytes())
+				lineBufferPool.Put(buf)
+			} else if err == io.EOF {
+				if len(line) == 0 {
+					return
+				}
+			} else {
+				atomic.AddUint64(&wm.Errors, 1)
+				return
+			}
+		}
+
+		if len(line) > 0 && line[len(line)-1] == '\n' {
+			line = line[:len(line)-1]
+		}
 		atomic.AddUint64(&wm.Requests, 1)
 		atomic.AddUint64(&wm.BytesIn, uint64(len(line)))
 		backend := pool.Pick()
 		if backend == nil {
-			if !writeClientLine(writer, wm, msgNoBackend) {
+			if _, err := clientWriter.WriteString(msgNoBackend); err != nil {
+				atomic.AddUint64(&wm.Errors, 1)
 				return
 			}
+			if err := clientWriter.WriteByte('\n'); err != nil {
+				atomic.AddUint64(&wm.Errors, 1)
+				return
+			}
+			if err := clientWriter.Flush(); err != nil {
+				atomic.AddUint64(&wm.Errors, 1)
+				return
+			}
+			atomic.AddUint64(&wm.BytesOut, uint64(len(msgNoBackend)+1))
 			atomic.AddUint64(&wm.Errors, 1)
 			continue
 		}
 
 		bm := pool.BeginBackendRequest(backend.Addr)
-		resp, err := forwardLine(pool, backend, line)
+		bytesOut, err := forwardLine(pool, backend, line, clientWriter)
 		pool.EndBackendRequest(backend.Addr, bm)
 		if err != nil {
 			log.Printf("backend %s error: %v", backend.Addr, err)
-			if !writeClientLine(writer, wm, msgBackendErr) {
+			if _, err := clientWriter.WriteString(msgBackendErr); err != nil {
+				atomic.AddUint64(&wm.Errors, 1)
 				return
 			}
+			if err := clientWriter.WriteByte('\n'); err != nil {
+				atomic.AddUint64(&wm.Errors, 1)
+				return
+			}
+			if err := clientWriter.Flush(); err != nil {
+				atomic.AddUint64(&wm.Errors, 1)
+				return
+			}
+			atomic.AddUint64(&wm.BytesOut, uint64(len(msgBackendErr)+1))
 			atomic.AddUint64(&wm.Errors, 1)
 			continue
 		}
 
-		if !writeClientLine(writer, wm, resp) {
-			return
-		}
-	}
-
-	if err := scanner.Err(); err != nil {
-		atomic.AddUint64(&wm.Errors, 1)
+		atomic.AddUint64(&wm.BytesOut, uint64(bytesOut))
 	}
 }
 
-func forwardLine(pool *models.BackendPool, backend *models.Backend, line string) (string, error) {
+func forwardLine(pool *models.BackendPool, backend *models.Backend, line []byte, clientWriter *bufio.Writer) (int, error) {
 	conn, err := pool.Acquire(backend)
 	if err != nil {
-		return "", err
+		return 0, err
 	}
 
 	reader := readerPool.Get().(*bufio.Reader)
@@ -150,35 +200,41 @@ func forwardLine(pool *models.BackendPool, backend *models.Backend, line string)
 		pool.Release(backend, conn, usable)
 	}()
 
-	if err := writeLine(writer, line); err != nil {
+	if _, err := writer.Write(line); err != nil {
 		usable = false
-		return "", err
+		return 0, err
 	}
-
-	resp, err := reader.ReadString('\n')
-	if err != nil {
+	if err := writer.WriteByte('\n'); err != nil {
 		usable = false
-		return "", err
+		return 0, err
+	}
+	if err := writer.Flush(); err != nil {
+		usable = false
+		return 0, err
 	}
 
-	return strings.TrimSuffix(resp, "\n"), nil
-}
-
-func writeClientLine(w *bufio.Writer, wm *models.WorkerMetrics, line string) bool {
-	if err := writeLine(w, line); err != nil {
-		atomic.AddUint64(&wm.Errors, 1)
-		return false
+	total := 0
+	for {
+		chunk, err := reader.ReadSlice('\n')
+		if len(chunk) > 0 {
+			n, werr := clientWriter.Write(chunk)
+			total += n
+			if werr != nil {
+				usable = false
+				return total, werr
+			}
+		}
+		if err == nil {
+			if err := clientWriter.Flush(); err != nil {
+				usable = false
+				return total, err
+			}
+			return total, nil
+		}
+		if err == bufio.ErrBufferFull {
+			continue
+		}
+		usable = false
+		return total, err
 	}
-	atomic.AddUint64(&wm.BytesOut, uint64(len(line)+1))
-	return true
-}
-
-func writeLine(w *bufio.Writer, line string) error {
-	if _, err := w.WriteString(line); err != nil {
-		return err
-	}
-	if err := w.WriteByte('\n'); err != nil {
-		return err
-	}
-	return w.Flush()
 }

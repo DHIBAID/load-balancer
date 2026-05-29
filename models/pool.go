@@ -11,16 +11,16 @@ import (
 )
 
 type BackendPool struct {
-	Next         uint64
-	nextWorkerID uint64
-	backendSnap  atomic.Value
-	workers      sync.Map
-	backendStats sync.Map
-	backends     sync.Map
-	poolSize     int
-	dialTimeout  time.Duration
+	Next          uint64
+	nextWorkerID  uint64
+	backendSnap   atomic.Value
+	workers       sync.Map
+	backendStats  sync.Map
+	backends      sync.Map
+	poolSize      int
+	dialTimeout   time.Duration
 	borrowTimeout time.Duration
-	totalMetrics PoolMetrics
+	totalMetrics  PoolMetrics
 }
 
 type WorkerMetrics struct {
@@ -56,8 +56,8 @@ func NewBackendPool(poolSize int, dialTimeout time.Duration) *BackendPool {
 		poolSize = 1
 	}
 	return &BackendPool{
-		poolSize:    poolSize,
-		dialTimeout: dialTimeout,
+		poolSize:      poolSize,
+		dialTimeout:   dialTimeout,
 		borrowTimeout: dialTimeout,
 	}
 }
