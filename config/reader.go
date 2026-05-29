@@ -9,8 +9,6 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// ReadConfig loads a YAML config file from the project root directory.
-// It searches for config.yaml and config.yml in that order.
 func ReadConfig() (models.Config, string, error) {
 	root, err := utils.FindProjectRoot()
 	if err != nil {

@@ -14,11 +14,6 @@ type BackendPool struct {
 	totalMetrics PoolMetrics
 }
 
-type backendSnapshot struct {
-	Active []string
-	Failed []string
-}
-
 type WorkerMetrics struct {
 	Requests uint64
 	Errors   uint64
@@ -40,12 +35,18 @@ type PoolMetrics struct {
 	FailedBackends    uint64 `json:"failed_backends"`
 }
 
+type backendSnapshot struct {
+	Active []string
+	Failed []string
+}
+
 func (p *BackendPool) Pick() string {
-	active, _ := p.SnapshotBackends()
-	if len(active) == 0 {
+	snapshot, ok := p.snapshot()
+	if !ok || len(snapshot.Active) == 0 {
 		return ""
 	}
 
+	active := snapshot.Active
 	start := int(atomic.AddUint64(&p.Next, 1)-1) % len(active)
 	selected := active[start]
 	minActive := p.backendActive(selected)
@@ -64,20 +65,19 @@ func (p *BackendPool) Pick() string {
 }
 
 func (p *BackendPool) backendActive(addr string) uint64 {
-	if value, ok := p.backendStats.Load(addr); ok {
-		if bm, ok := value.(*BackendMetrics); ok && bm != nil {
-			return atomic.LoadUint64(&bm.Active)
-		}
+	value, ok := p.backendStats.Load(addr)
+	if !ok {
+		return 0
 	}
-	return 0
+	bm, ok := value.(*BackendMetrics)
+	if !ok || bm == nil {
+		return 0
+	}
+	return atomic.LoadUint64(&bm.Active)
 }
 
 func (p *BackendPool) SnapshotBackends() (active []string, failed []string) {
-	snapshotAny := p.backends.Load()
-	if snapshotAny == nil {
-		return nil, nil
-	}
-	snapshot, ok := snapshotAny.(backendSnapshot)
+	snapshot, ok := p.snapshot()
 	if !ok {
 		return nil, nil
 	}
@@ -87,16 +87,16 @@ func (p *BackendPool) SnapshotBackends() (active []string, failed []string) {
 	return active, failed
 }
 
-func (p *BackendPool) ReplaceBackends(active []string, failed []string) {
-	snapshot := backendSnapshot{
-		Active: append([]string(nil), active...),
-		Failed: append([]string(nil), failed...),
-	}
-	p.backends.Store(snapshot)
+func (p *BackendPool) snapshot() (backendSnapshot, bool) {
+	snapshot, ok := p.backends.Load().(backendSnapshot)
+	return snapshot, ok
 }
 
-func (p *BackendPool) InitBackends(active []string) {
-	p.ReplaceBackends(active, nil)
+func (p *BackendPool) ReplaceBackends(active []string, failed []string) {
+	p.backends.Store(backendSnapshot{
+		Active: append([]string(nil), active...),
+		Failed: append([]string(nil), failed...),
+	})
 }
 
 func (p *BackendPool) RegisterWorker() (uint64, *WorkerMetrics) {
@@ -107,28 +107,16 @@ func (p *BackendPool) RegisterWorker() (uint64, *WorkerMetrics) {
 }
 
 func (p *BackendPool) BeginBackendRequest(addr string) *BackendMetrics {
-	if value, ok := p.backendStats.Load(addr); ok {
-		if bm, ok := value.(*BackendMetrics); ok && bm != nil {
-			atomic.AddUint64(&bm.Active, 1)
-			return bm
-		}
+	value, _ := p.backendStats.LoadOrStore(addr, &BackendMetrics{})
+	bm, ok := value.(*BackendMetrics)
+	if !ok || bm == nil {
+		return nil
 	}
-
-	bm := &BackendMetrics{}
 	atomic.AddUint64(&bm.Active, 1)
-	actual, _ := p.backendStats.LoadOrStore(addr, bm)
-	if existing, ok := actual.(*BackendMetrics); ok && existing != nil {
-		if existing != bm {
-			atomic.AddUint64(&bm.Active, ^uint64(0))
-			atomic.AddUint64(&existing.Active, 1)
-			return existing
-		}
-	}
 	return bm
 }
 
-func (p *BackendPool) EndBackendRequest(addr string, bm *BackendMetrics) {
-	_ = addr
+func (p *BackendPool) EndBackendRequest(_ string, bm *BackendMetrics) {
 	if bm == nil {
 		return
 	}
@@ -146,7 +134,7 @@ func (p *BackendPool) UnregisterWorker(id uint64, wm *WorkerMetrics) {
 }
 
 func (p *BackendPool) SnapshotMetrics() PoolMetrics {
-	live := WorkerMetrics{}
+	var live WorkerMetrics
 	activeConnections := uint64(0)
 	p.workers.Range(func(_, value any) bool {
 		wm, ok := value.(*WorkerMetrics)
@@ -168,10 +156,10 @@ func (p *BackendPool) SnapshotMetrics() PoolMetrics {
 		BytesIn:           atomic.LoadUint64(&p.totalMetrics.BytesIn) + live.BytesIn,
 		BytesOut:          atomic.LoadUint64(&p.totalMetrics.BytesOut) + live.BytesOut,
 	}
-
-	active, failed := p.SnapshotBackends()
-	totals.HealthyBackends = uint64(len(active))
-	totals.FailedBackends = uint64(len(failed))
+	if snapshot, ok := p.snapshot(); ok {
+		totals.HealthyBackends = uint64(len(snapshot.Active))
+		totals.FailedBackends = uint64(len(snapshot.Failed))
+	}
 
 	return totals
 }

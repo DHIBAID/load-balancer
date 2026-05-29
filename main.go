@@ -13,6 +13,11 @@ import (
 	"time"
 )
 
+const (
+	msgNoBackend  = "no backend available"
+	msgBackendErr = "backend error"
+)
+
 func main() {
 	cfg, cfgPath, err := config.ReadConfig()
 	if err != nil {
@@ -35,7 +40,7 @@ func main() {
 	}
 
 	pool := &models.BackendPool{}
-	pool.InitBackends(backends)
+	pool.ReplaceBackends(backends, nil)
 
 	ln, err := net.Listen("tcp", listenAddr)
 	if err != nil {
@@ -43,7 +48,6 @@ func main() {
 	}
 	log.Printf("tcp lb listening on %s", listenAddr)
 
-	// Start a goroutine to periodically check the health of backends
 	go func() {
 		for {
 			services.CheckHealth(pool)
@@ -51,10 +55,7 @@ func main() {
 		}
 	}()
 
-	// Spawn HTTP server for metrics
-	go func() {
-		services.StartMetricsServer(&cfg, pool)
-	}()
+	go services.StartMetricsServer(&cfg, pool)
 
 	for {
 		clientConn, err := ln.Accept()
@@ -65,7 +66,6 @@ func main() {
 
 		go handleClient(clientConn, pool, timeout)
 	}
-
 }
 
 func handleClient(c net.Conn, pool *models.BackendPool, timeout time.Duration) {
@@ -74,13 +74,16 @@ func handleClient(c net.Conn, pool *models.BackendPool, timeout time.Duration) {
 	defer pool.UnregisterWorker(id, wm)
 
 	scanner := bufio.NewScanner(c)
+	writer := bufio.NewWriter(c)
 	for scanner.Scan() {
 		line := scanner.Text()
 		atomic.AddUint64(&wm.Requests, 1)
 		atomic.AddUint64(&wm.BytesIn, uint64(len(line)))
 		backendAddr := pool.Pick()
 		if backendAddr == "" {
-			_, _ = c.Write([]byte("no backend available\n"))
+			if !writeClientLine(writer, wm, msgNoBackend) {
+				return
+			}
 			atomic.AddUint64(&wm.Errors, 1)
 			continue
 		}
@@ -90,13 +93,16 @@ func handleClient(c net.Conn, pool *models.BackendPool, timeout time.Duration) {
 		pool.EndBackendRequest(backendAddr, bm)
 		if err != nil {
 			log.Printf("dial %s error: %v", backendAddr, err)
-			_, _ = c.Write([]byte("backend error\n"))
+			if !writeClientLine(writer, wm, msgBackendErr) {
+				return
+			}
 			atomic.AddUint64(&wm.Errors, 1)
 			continue
 		}
 
-		_, _ = c.Write([]byte(resp + "\n"))
-		atomic.AddUint64(&wm.BytesOut, uint64(len(resp)+1))
+		if !writeClientLine(writer, wm, resp) {
+			return
+		}
 	}
 
 	if err := scanner.Err(); err != nil {
@@ -112,12 +118,10 @@ func forwardLine(backendAddr string, timeout time.Duration, line string) (string
 	defer conn.Close()
 
 	reader := bufio.NewReader(conn)
+	writer := bufio.NewWriter(conn)
 	_, _ = reader.ReadString('\n')
 
-	if !strings.HasSuffix(line, "\n") {
-		line += "\n"
-	}
-	if _, err := conn.Write([]byte(line)); err != nil {
+	if err := writeLine(writer, line); err != nil {
 		return "", err
 	}
 
@@ -127,4 +131,23 @@ func forwardLine(backendAddr string, timeout time.Duration, line string) (string
 	}
 
 	return strings.TrimSuffix(resp, "\n"), nil
+}
+
+func writeClientLine(w *bufio.Writer, wm *models.WorkerMetrics, line string) bool {
+	if err := writeLine(w, line); err != nil {
+		atomic.AddUint64(&wm.Errors, 1)
+		return false
+	}
+	atomic.AddUint64(&wm.BytesOut, uint64(len(line)+1))
+	return true
+}
+
+func writeLine(w *bufio.Writer, line string) error {
+	if _, err := w.WriteString(line); err != nil {
+		return err
+	}
+	if err := w.WriteByte('\n'); err != nil {
+		return err
+	}
+	return w.Flush()
 }
