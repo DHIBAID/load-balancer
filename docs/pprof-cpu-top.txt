@@ -1,0 +1,130 @@
+File: load-balancer
+Build ID: 517c380819e42c5d74cc9dab1cbea4956334fae0
+Type: cpu
+Time: 2026-06-16 18:22:57 IST
+Duration: 15s, Total samples = 10.39s (69.26%)
+Showing nodes accounting for 9.27s, 89.22% of 10.39s total
+Dropped 167 nodes (cum <= 0.05s)
+      flat  flat%   sum%        cum   cum%
+     7.44s 71.61% 71.61%      7.44s 71.61%  internal/runtime/syscall/linux.Syscall6
+     0.26s  2.50% 74.11%      0.26s  2.50%  runtime.futex
+     0.22s  2.12% 76.23%      0.22s  2.12%  runtime.memclrNoHeapPointers
+     0.13s  1.25% 77.48%      0.13s  1.25%  internal/runtime/atomic.(*Uint32).CompareAndSwap (inline)
+     0.13s  1.25% 78.73%      0.13s  1.25%  runtime.memmove
+     0.07s  0.67% 79.40%      9.04s 87.01%  main.handleClient
+     0.07s  0.67% 80.08%      0.18s  1.73%  runtime.lock2
+     0.07s  0.67% 80.75%      0.07s  0.67%  runtime.procyieldAsm
+     0.05s  0.48% 81.23%      0.06s  0.58%  runtime.(*timers).siftDown
+     0.05s  0.48% 81.71%      0.12s  1.15%  runtime.netpollblock
+     0.05s  0.48% 82.19%      0.37s  3.56%  runtime.selectgo
+     0.05s  0.48% 82.68%      2.02s 19.44%  syscall.read
+     0.04s  0.38% 83.06%      0.09s  0.87%  runtime.casgstatus
+     0.04s  0.38% 83.45%      0.09s  0.87%  runtime.sellock
+     0.04s  0.38% 83.83%      0.07s  0.67%  runtime.unlock2
+     0.03s  0.29% 84.12%         5s 48.12%  net.(*netFD).Write
+     0.03s  0.29% 84.41%      0.78s  7.51%  runtime.findRunnable
+     0.03s  0.29% 84.70%      0.48s  4.62%  runtime.mallocgc
+     0.02s  0.19% 84.89%      0.14s  1.35%  internal/poll.runtime_pollWait
+     0.02s  0.19% 85.08%      0.60s  5.77%  load-balancer/models.(*BackendPool).Acquire
+     0.02s  0.19% 85.27%      6.96s 66.99%  main.forwardLine
+     0.02s  0.19% 85.47%      2.23s 21.46%  net.(*conn).Read
+     0.02s  0.19% 85.66%      0.06s  0.58%  runtime.(*waitq).dequeue (inline)
+     0.02s  0.19% 85.85%      0.11s  1.06%  runtime.makechan
+     0.02s  0.19% 86.04%      0.14s  1.35%  runtime.mallocgcSmallScanNoHeader
+     0.02s  0.19% 86.24%      0.34s  3.27%  runtime.netpoll
+     0.02s  0.19% 86.43%      0.93s  8.95%  runtime.park_m
+     0.02s  0.19% 86.62%      0.09s  0.87%  runtime.stealWork
+     0.02s  0.19% 86.81%      7.11s 68.43%  syscall.RawSyscall6
+     0.01s 0.096% 86.91%      2.24s 21.56%  bufio.(*Reader).fill
+     0.01s 0.096% 87.01%      5.01s 48.22%  bufio.(*Writer).Flush
+     0.01s 0.096% 87.10%      2.20s 21.17%  internal/poll.(*FD).Read
+     0.01s 0.096% 87.20%      0.08s  0.77%  internal/poll.(*pollDesc).init
+     0.01s 0.096% 87.30%      0.15s  1.44%  internal/poll.(*pollDesc).wait
+     0.01s 0.096% 87.39%      0.07s  0.67%  internal/poll.runtime_pollOpen
+     0.01s 0.096% 87.49%      0.09s  0.87%  internal/sync.(*HashTrieMap[go.shape.interface {},go.shape.interface {}]).Load
+     0.01s 0.096% 87.58%      0.11s  1.06%  load-balancer/models.(*BackendPool).Pick
+     0.01s 0.096% 87.68%      0.19s  1.83%  load-balancer/models.(*BackendPool).Release
+     0.01s 0.096% 87.78%      2.21s 21.27%  net.(*netFD).Read
+     0.01s 0.096% 87.87%      0.19s  1.83%  net.(*netFD).accept
+     0.01s 0.096% 87.97%      0.06s  0.58%  runtime.(*mheap).allocSpan
+     0.01s 0.096% 88.07%      0.07s  0.67%  runtime.(*sweepLocked).sweep
+     0.01s 0.096% 88.16%      0.09s  0.87%  runtime.(*timers).cleanHead
+     0.01s 0.096% 88.26%      0.07s  0.67%  runtime.entersyscall
+     0.01s 0.096% 88.35%      0.96s  9.24%  runtime.mcall
+     0.01s 0.096% 88.45%      0.20s  1.92%  runtime.newobject
+     0.01s 0.096% 88.55%      0.06s  0.58%  runtime.nilinterhash
+     0.01s 0.096% 88.64%      0.14s  1.35%  runtime.notesleep
+     0.01s 0.096% 88.74%      0.86s  8.28%  runtime.schedule
+     0.01s 0.096% 88.84%      0.07s  0.67%  runtime.send
+     0.01s 0.096% 88.93%      0.16s  1.54%  runtime.stopm
+     0.01s 0.096% 89.03%      0.09s  0.87%  runtime.sweepone
+     0.01s 0.096% 89.12%      4.93s 47.45%  syscall.write
+     0.01s 0.096% 89.22%      0.20s  1.92%  time.NewTimer
+         0     0% 89.22%      2.29s 22.04%  bufio.(*Reader).ReadSlice
+         0     0% 89.22%      0.12s  1.15%  bufio.(*Writer).Write
+         0     0% 89.22%      0.23s  2.21%  bufio.NewReaderSize (inline)
+         0     0% 89.22%      0.07s  0.67%  internal/poll.(*FD).Accept
+         0     0% 89.22%      0.23s  2.21%  internal/poll.(*FD).Close
+         0     0% 89.22%      0.08s  0.77%  internal/poll.(*FD).Init
+         0     0% 89.22%      0.07s  0.67%  internal/poll.(*FD).SetsockoptInt
+         0     0% 89.22%      4.97s 47.83%  internal/poll.(*FD).Write
+         0     0% 89.22%      0.22s  2.12%  internal/poll.(*FD).decref
+         0     0% 89.22%      0.22s  2.12%  internal/poll.(*FD).destroy
+         0     0% 89.22%      0.20s  1.92%  internal/poll.(*SysFile).destroy (inline)
+         0     0% 89.22%      0.15s  1.44%  internal/poll.(*pollDesc).waitRead (inline)
+         0     0% 89.22%      0.07s  0.67%  internal/poll.accept
+         0     0% 89.22%      6.96s 66.99%  internal/poll.ignoringEINTRIO (inline)
+         0     0% 89.22%      0.30s  2.89%  internal/runtime/syscall/linux.EpollWait
+         0     0% 89.22%      0.11s  1.06%  load-balancer/models.(*BackendPool).BeginBackendRequest
+         0     0% 89.22%      0.07s  0.67%  load-balancer/models.(*BackendPool).backendActive
+         0     0% 89.22%      0.19s  1.83%  main.forwardLine.func1
+         0     0% 89.22%      0.26s  2.50%  main.main
+         0     0% 89.22%      0.07s  0.67%  net.(*TCPConn).SetKeepAliveConfig
+         0     0% 89.22%      0.26s  2.50%  net.(*TCPListener).Accept
+         0     0% 89.22%      0.26s  2.50%  net.(*TCPListener).accept
+         0     0% 89.22%      0.23s  2.21%  net.(*conn).Close
+         0     0% 89.22%         5s 48.12%  net.(*conn).Write
+         0     0% 89.22%      0.23s  2.21%  net.(*netFD).Close
+         0     0% 89.22%      0.08s  0.77%  net.(*netFD).init (inline)
+         0     0% 89.22%      0.07s  0.67%  net.newTCPConn
+         0     0% 89.22%      0.06s  0.58%  runtime.(*mcache).nextFree
+         0     0% 89.22%      0.06s  0.58%  runtime.(*mcache).refill
+         0     0% 89.22%      0.06s  0.58%  runtime.(*mheap).alloc
+         0     0% 89.22%      0.06s  0.58%  runtime.(*mheap).alloc.func1
+         0     0% 89.22%      0.12s  1.15%  runtime.(*timer).maybeAdd
+         0     0% 89.22%      0.06s  0.58%  runtime.(*timer).updateHeap
+         0     0% 89.22%      0.06s  0.58%  runtime.(*timers).deleteMin
+         0     0% 89.22%      0.09s  0.87%  runtime.bgsweep
+         0     0% 89.22%      0.12s  1.15%  runtime.blockTimerChan
+         0     0% 89.22%      0.18s  1.73%  runtime.chansend
+         0     0% 89.22%      0.18s  1.73%  runtime.chansend1
+         0     0% 89.22%      0.06s  0.58%  runtime.deductAssistCredit
+         0     0% 89.22%      0.16s  1.54%  runtime.futexsleep
+         0     0% 89.22%      0.10s  0.96%  runtime.futexwakeup
+         0     0% 89.22%      0.06s  0.58%  runtime.gcAssistAlloc
+         0     0% 89.22%      0.11s  1.06%  runtime.injectglist
+         0     0% 89.22%      0.07s  0.67%  runtime.injectglist.func1
+         0     0% 89.22%      0.18s  1.73%  runtime.lock (inline)
+         0     0% 89.22%      0.18s  1.73%  runtime.lockWithRank (inline)
+         0     0% 89.22%      0.14s  1.35%  runtime.mPark (inline)
+         0     0% 89.22%      0.26s  2.50%  runtime.main
+         0     0% 89.22%      0.23s  2.21%  runtime.makeslice
+         0     0% 89.22%      0.23s  2.21%  runtime.mallocgcLarge
+         0     0% 89.22%      0.18s  1.73%  runtime.memclrNoHeapPointersChunked
+         0     0% 89.22%      0.08s  0.77%  runtime.notewakeup
+         0     0% 89.22%      0.07s  0.67%  runtime.procyield (inline)
+         0     0% 89.22%      0.09s  0.87%  runtime.startm
+         0     0% 89.22%      0.22s  2.12%  runtime.systemstack
+         0     0% 89.22%      0.07s  0.67%  runtime.unlock (inline)
+         0     0% 89.22%      0.07s  0.67%  runtime.unlockWithRank (inline)
+         0     0% 89.22%      0.09s  0.87%  sync.(*Map).Load (inline)
+         0     0% 89.22%      0.07s  0.67%  syscall.Accept4
+         0     0% 89.22%      0.20s  1.92%  syscall.Close
+         0     0% 89.22%      2.02s 19.44%  syscall.Read (inline)
+         0     0% 89.22%      0.07s  0.67%  syscall.SetsockoptInt (inline)
+         0     0% 89.22%      7.09s 68.24%  syscall.Syscall
+         0     0% 89.22%      0.14s  1.35%  syscall.Syscall6
+         0     0% 89.22%      4.93s 47.45%  syscall.Write (inline)
+         0     0% 89.22%      0.07s  0.67%  syscall.accept4
+         0     0% 89.22%      0.07s  0.67%  syscall.setsockopt
+         0     0% 89.22%      0.07s  0.67%  time.newTimer

@@ -1,0 +1,13 @@
+File: load-balancer
+Build ID: 517c380819e42c5d74cc9dab1cbea4956334fae0
+Type: inuse_space
+Time: 2026-06-16 18:23:27 IST
+Showing nodes accounting for 660.75MB, 98.95% of 667.75MB total
+Dropped 41 nodes (cum <= 3.34MB)
+      flat  flat%   sum%        cum   cum%
+  619.10MB 92.71% 92.71%   619.10MB 92.71%  bufio.NewReaderSize (inline)
+   37.14MB  5.56% 98.28%    37.14MB  5.56%  bufio.NewWriterSize (inline)
+    4.50MB  0.67% 98.95%     4.50MB  0.67%  runtime.mallocgc
+         0     0% 98.95%    37.14MB  5.56%  bufio.NewWriter (inline)
+         0     0% 98.95%   659.75MB 98.80%  main.handleClient
+         0     0% 98.95%     4.50MB  0.67%  runtime.newobject
